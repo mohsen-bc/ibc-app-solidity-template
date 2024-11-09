@@ -1,6 +1,6 @@
 # ⛓️🔗⛓️ Template for IBC enabled Solidity contracts
 
-This repo provides a starter project to build [IBC](https://github.com/cosmos/ibc) enabled Solidity contracts that connect rollups to one another Polymer Hub, through the [vIBC core contracts](https://github.com/open-ibc/vibc-core-smart-contracts).
+This [IBC app in Solidity template repo](https://github.com/open-ibc/ibc-app-solidity-template/tree/main) provides a starter project that serves as a starting point for building multichain smart contracts that leverage Polymer Hub to connect across rollups through our [vIBC core contracts](https://github.com/open-ibc/vibc-core-smart-contracts).
 
 The repository is a _GitHub template_ repository so you can click "Use this template" to create your own project repository without having the entire commit history of the template.
 
@@ -35,11 +35,41 @@ From the root directory run:
 just install
 ```
 
-to install the [vIBC core smart contracts](https://github.com/open-ibc/vibc-core-smart-contracts) as a dependency.
+to install the [vIBC core smart contracts](https://github.com/open-ibc/vibc-core-smart-contracts) and the [Polymer registry](https://github.com/polymerdao/polymer-registry) as a dependency.
 
 Additionally Hardhat will be installed as a dev dependency with some useful plugins. Check `package.json` for an exhaustive list.
 
-## ⚙️ Set up your environment variables
+> Note: In case you're experiencing issues with dependencies using the `just install` recipe, check that all prerequisites are correctly installed. If issues persist with forge, try to do the individual dependency installations...
+
+### Version compatibility
+
+| IBC-App-Solidity | vIBC core | Polymer Registry | Supported? |
+|-------------------|-----------|-----------| --------|
+| v0.1.0       | v1.0.0       | X       | Deprecated |
+| v0.2.0       | v1.0.0        | v0.1.0*      | Deprecated |
+| v1.0.0        | v2.0.0       | v0.0.1    | Yes |
+Note (*): v0.2.0 uses a [POC version](https://github.com/tmsdkeys/polymer-registry-poc/releases/tag/v0.1.0) 
+
+## ⚙️ Set up your environment and configuration
+
+The idea is to ensure that most configuration to add Polymer's vIBC is added as custom data in the configuration file of your development environment, e.g. Hardhat or Foundry. (Note that at the time of writing, only Hardhat is fully supported).
+
+Make sure to add network information to the Hardhat configuration for all supported networks you're interested in building on, following this schema:
+```javascript
+networks: {
+    // for OP testnet
+    optimism: {
+      url: 'https://sepolia.optimism.io',
+      alchemyRPC: `https://opt-sepolia.g.alchemy.com/v2/${process.env.OP_ALCHEMY_API_KEY}`,
+      accounts: [process.env.PRIVATE_KEY_1],
+      chainId: 11155420,
+    }
+}
+```
+
+Especially make sure the chain ID is added as it will be used to fetch the correct data from the Polymer registry by ID, while you can locally refer to the chain as the name you've specified in the Hardhat config.
+
+### Environment variables
 
 Convert the `.env.example` file into an `.env` file. This will ignore the file for future git commits as well as expose the environment variables. Add your private keys and update the other values if you want to customize (advanced usage feature).
 
@@ -48,6 +78,27 @@ cp .env.example .env
 ```
 
 This will enable you to sign transactions with your private key(s). If not added, the scripts from the justfile will fail.
+
+### Configuration file
+
+The configuration file is where all important data is stored for the just commands and automation. We strive to make direct interaction with the config file as little as possible.
+
+By default the configuration file is stored in the config folder as `config.json`.
+
+> 💡 However, it is recommended to split up different contracts/projects in the same repo into different config files in case you want to switch between them.
+
+Store alternate config files in the /config directory and set the path in the Hardhat coniguration file:
+```javascript
+    // path to configuration file the scripts will use for Polymer's vibc, defaulting to config/config.json when not set
+    vibcConfigPath: 'config/alt-config.json',  
+```
+to use a different config file.
+
+Contrary to previous version, you have to build the default configuration file by specifying the networks (from the Hardhat config) you want it to include:
+```sh
+# Usage: just build-config SOURCE DESTINATION
+just build-config optimism base
+```
 
 ### Obtaining testnet ETH
 
@@ -58,13 +109,29 @@ The account associated with your private key must have both Base Sepolia and Opt
 
 ## 🏃🏽🏃🏻‍♀️ Quickstart
 
-The project comes with a built-in dummy application called x-counter. You can find the contracts in the `/contracts` directory as XCounterUC.sol and XCounter.sol (the former when using the universal channel, the latter when creating a custom IBC channel).
+The project comes with a built-in dummy application called x-counter (which syncrhonizes a counter across two contracts on remote chains). You can find the contracts in the `/contracts` directory as XCounterUC.sol and XCounter.sol (the former when using the [universal channel](https://docs.polymerlabs.org/docs/build/executing-messages/universal-channels), the latter when creating a [custom/private channel](https://docs.polymerlabs.org/docs/build/executing-messages/private-channels)).
+
+### Universal channels
+
+The easiest way to get onboarded is to use Universal channels. Universal channel is like an open port already deployed by Polymer to allow anyone to call a remote contracts. Universal channels utilize a contract which is known as Universal channel handler (UCH).
+
+Users can utilize universal channels through deploying a Universal channel compatible contract. This can be done either from deploying a contract which inherits the [UniversalChanIbcApp](./contracts/base/UniversalChanIbcApp.sol) base contract) or implements the [IbcUniversalPacketReceiver and IbcUniversalPacketSender interfaces](https://github.com/open-ibc/vibc-core-smart-contracts/blob/main/contracts/interfaces/IbcMiddleware.sol#L100-L112). Once deployed, the dapp will be able to connect to the Universal Channel handler, define Universal packets which will then be wrapped into a regular IBC packet by the Universal Channel Handler and unwrapped by its counterparty on the destination chain. The Universal channel handler on the destination will then unwrap the the packet and send the data to defined address.
+
+The configuration file that comes as default in the template repository, allows to quickly send a packet by running:
+
+```sh
+just send-packet base
+```
+
+To send a packet between the XCounterUC contract on Base Sepolia to OP Sepolia and vice versa.
 
 ### Custom IBC channel
 
-The default setup (`.env`, `config.json`) are preconfigured to try to send packets over a custom channel.
+There is a quick guide available that helps you send packets over a custom/private IBC channel. The channel is established through a session setup process, known as a handshake, which typically takes less than five minutes to complete. Once established, the private channel provides fault isolation from other applications, ensuring that only your contracts can communicate with each other, unlike universal channels.
 
-Run the following command to go through a full E2E sweep of the project:
+To have your application be compatible with custom IBC channels, have it inherit the [CustomChanIbcApp](./contracts/base/CustomChanIbcApp.sol) base contract.
+
+Run the following command to go through a full E2E sweep of the project, using the default XCounter.sol contract:
 
 ```bash
 # Usage: just do-it
@@ -77,29 +144,14 @@ It does the following under the hood:
 # Usage: just do-it
 do-it:
     echo "Running the full E2E flow..."
-    just set-contracts optimism XCounter && just set-contracts base XCounter
-    just deploy optimism base false
+    just set-contracts optimism XCounter false && just set-contracts base XCounter false
+    just deploy optimism base
     just create-channel
-    just send-packet optimism false
+    just send-packet optimism
     echo "You've done it!"
 ```
 
 It makes sure you've got the correct contracts set, deploys new instances, creates a channel and sends a packet over the channel once created.
-
-> Note: by default the sim-client is used to improve latency. This is useful for iterative development and testing BUT also insecure as it involves no proofs. Make sure to move to the client **with proofs** by running another just command...
-
-```bash
-# Usage: just switch-client [universal=true]
-just switch-client false
-```
-
-Check if the packet got through on the [Polymer IBC explorer](https://sepolia.polymer.zone/packets).
-
-### Universal channels
-
-Soon...
-
-<!-- TODO: add how to check for the packet on explorer or set up an event listener -->
 
 ## 💻 Develop your custom application
 
@@ -107,50 +159,63 @@ The main work for you as a developer is to develop the contracts that make up yo
 
 You can use the contracts in the "/contracts/base" directory as base contracts for creating IBC enabled contracts that can either send packets over the universal channel or create their own channel to send packets over.
 
-A complete walkthrough on how to develop these contracts is provided in the [official Polymer documentation](https://docs.polymerlabs.org/docs/build/ibc-solidity/).
+A complete walkthrough on how to develop these contracts is provided in the [Developer Launchpad](https://docs.polymerlabs.org/docs/build/dev-launchpad).
 
 ## 🕹️ Interaction with the contracts
 
-When the contracts are ready, you can go ahead and interact with the contracts through scripts. There is a Justfile to for the most common commands, with the underlying scripts in the /scripts folder.
+When the contracts are ready, you can go ahead and interact with the contracts through scripts. There is a Justfile too for the most common commands, with the underlying scripts in the  `/scripts` folder.
 
-There's three types of default scripts in the project:
+The `/private` folder within the scripts folder has scripts that you're unlikely to need to touch. The only scripts you'll (potentially) be interacting with are:
 
-- `_deploy.js` and `deploy-config.js` allow you to deploy your application contract
-- `_create-channel.js` and `create-channel-config.js` creates a channel
-- `send-packet.js` sends packets over an existing custom channel, and `send-universal-packet.js` is specifically for sending packets over a universal channel
+- The `deploy.js` allows you to deploy your application contract. You may want to add additional deployment logic to the Hardhat script.
+- In the `/contracts` folder you'll find `arguments.js` to add your custom constructor arguments for automated deployment with the `deploy.js` script.
+- The `send-packet.js` script sends packets over an existing custom channel, and `send-universal-packet.js` is specifically for sending packets over a universal channel. You might want to add additional logic before or after sending the packet to cusotmize your application.
 
-For every script you'll find a field in the configuration file!!
+For most of the actions above and more, there are just recipes that combine related logic and update the configuation file in an automated way.
 
 > **Note**: These are the default scripts provided. They provide the most generic interactions with the contracts to deploy, create channels and send packets. For more complicated use cases you will want to customize the scripts to your use case. See [advanced usage](#🦾-advanced-usage) for more info.
 
 ### Deploy
 
-Before deploying, make sure to update the config.json with your contract type to deploy for each of the chain you wish to deploy to.
+Before deploying, make sure to update the config.json with your contract type to deploy for each of the chains you wish to deploy to.
+
+#### Set contracts to config
 
 Do this by running:
 
 ```bash
-# Usage: just set-contracts [chain] [contract_type]
-just set-contracts optimism MyContract
+# Usage: just set-contracts [chain] [contract_type] [universal]
+just set-contracts optimism MyContract true
 ```
 
 to deploy _MyContract_ artefact to the Optimism (Sepolia) chain.
 
+> **IMPORTANT**: This is where you set if your contract uses universal or custom channels. Make sure this corresponds to the base contract you've inherited from when developing your application (UniversalChanIbcApp or CustomChanIbcApp).
+
+#### Constructor arguments
+
+By default any application inheriting a base IBC application contract will need a dispatcher or universal channel handler address passed into the constructor. Obviously you might have other constructor arguments you may want to add. To still make use of the `just deploy source destination` recipe, add your arguments to the arguments.js file
+
+```javascript title="/contracts/arguments.js"
+module.exports = {
+    "XCounter": [],
+    "XCounterUC": [],
+    // Add your contract types here, along with the list of custom constructor arguments
+    // DO NOT ADD THE DISPATCHER OR UNIVERSAL CHANNEL HANDLER ADDRESSES HERE!!!
+    // These will be added in the deploy script at $ROOT/scripts/deploy.js
+};
+```
+
+#### Finally: deploy
+
 Then run:
 
 ```bash
-# Usage: just deploy [source] [destination] [universal]
-just deploy optimism base true
+# Usage: just deploy [source] [destination]
+just deploy optimism base
 ```
 
-for an application that will use a universal channel, or:
-
-```bash
-# or
-just deploy optimism base false
-```
-
-for an application that uses custom channels.
+where the script will automatically detect whether you are using custom or universal IBC channels.
 
 The script will take the output of the deployment and update the config file with all the relevant information.
 
@@ -158,10 +223,9 @@ Before moving on, you'll want to check if the variables in your .env and config 
 
 To do a sanity check, run:
 ```bash
-# Usage: just sanity-check [universal=true]
-just sanity-check false
+# Usage: just sanity-check
+just sanity-check
 ```
-Pick false for custom channels and true (or leave empty) for universal channels.
 
 ### Create a channel
 
@@ -177,49 +241,16 @@ This creates a channel between base and optimism. Note that the **ORDER MATTERS*
 
 The script will take the output of the channel creation and update the config file with all the relevant information.
 
-Check out the [channel tab in the explorer](https://explorer.prod.testnet.polymer.zone/channels) to find out if the correct channel-id's related to your contracts were updated in the config.
-
 ### Send packets
 
 Finally Run:
 
 ```bash
-# Usage: just send-packet [source] [universal]
-just send-packet optimism true
+# Usage: just send-packet
+just send-packet optimism 
 ```
 
-to send a packet over a **universal channel**. You can pick either optimism or base to send the packet from.
-
-Or run:
-
-```bash
-just send-packet optimism false
-```
-
-to send a packet over a **custom channel**. You can pick either optimism or base to send the packet from.
-
-## Verify, don't trust
-
-> Note: by default the sim-client is used to improve latency. This is useful for iterative development and testing BUT also insecure as it involves no proofs. Make sure to move to the client **with proofs** by running another just command...
-
-```bash
-# Usage: just switch-client [universal=true]
-just switch-client false
-```
-
-This will use the op-stack client with proofs, making sure that the relayer is proving what is being submitted every step along the way, ensuring there's no trust assumption on the relayer.
-
-## 🦾 Advanced usage
-
-For advanced users, there's multiple custimizations to follow. These includes configuring the config.json manually and/or running the scripts without using just.
-
-For example, the last action to send a packet on a universal channel could be executed with this command:
-
-```bash
-npx hardhat run scripts/send-universal-packet.js --network base
-```
-
-To send a universal packet from the contract specified in the config.sendUniversalPacket field in the config.
+to send a packet over a channel (script looks at the config's isUniversal flag to know if it should use the custom or universal packet). You can pick either optimism or base to send the packet from.
 
 ## 🤝 Contributing
 

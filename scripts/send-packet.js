@@ -5,39 +5,46 @@
 // will compile your contracts, add the Hardhat Runtime Environment's members to the
 // global scope, and execute the script.
 const hre = require('hardhat');
-const path = require('path');
-const configRelativePath = process.env.CONFIG_PATH || 'config.json';
-const configPath = path.join(__dirname, '..' , configRelativePath);
-const config = require(configPath);
-const sendConfig = config.sendPacket;
-
-const { listenForIbcPacketEvents } = require('./_events.js');
-const { getDispatcher, getIbcApp } = require('./_vibc-helpers.js');
+const { getConfigPath, estimateRelayerFees, convertNetworkToChainId } = require('./private/_helpers');
+const { getIbcApp } = require('./private/_vibc-helpers.js');
 
 async function main() {
-    const accounts = await hre.ethers.getSigners();
+  const accounts = await hre.ethers.getSigners();
+  const config = require(getConfigPath());
+  const sendConfig = config.sendPacket;
 
-    // Get the dispatchers for both source and destination to listen for IBC packet events
-    const opDispatcher = await getDispatcher("optimism");
-    const baseDispatcher = await getDispatcher("base");
-    listenForIbcPacketEvents("optimism", opDispatcher);
-    listenForIbcPacketEvents("base", baseDispatcher);
+  const networkName = hre.network.name;
+  // Get the contract type from the config and get the contract
+  const ibcApp = await getIbcApp(networkName);
 
-    const networkName = hre.network.name;
-    // Get the contract type from the config and get the contract
-    const ibcApp = await getIbcApp(networkName, false);
+  // Do logic to prepare the packet
+  const channelId = sendConfig.networks[`${networkName}`]['channelId'];
+  const channelIdBytes = hre.ethers.encodeBytes32String(channelId);
+  const timeoutSeconds = sendConfig.networks[`${networkName}`]['timeout'];
+  const recvPacketGasLimit = hre.ethers.toBigInt(config.sendPacket['recvPacketGasLimit']);
+  const ackPacketGasLimit = hre.ethers.toBigInt(config.sendPacket['ackPacketGasLimit']);
 
-    // Do logic to prepare the packet
-    const channelId = sendConfig[`${networkName}`]["channelId"];
-    const channelIdBytes = hre.ethers.encodeBytes32String(channelId);
-    const timeoutSeconds = sendConfig[`${networkName}`]["timeout"];
-    
-    // Send the packet
-    await ibcApp.connect(accounts[0]).sendPacket(
-        channelIdBytes,
-        timeoutSeconds,
-        // Define and pass optionalArgs appropriately or remove if not needed    
-        );
+  // We get the src chain id from the network name, but need to find dest through the chain not being used.
+  // Once polymer has multi-chain expansion, this should really be converted into a hardhat task and the user should specify the source and dest chain through cli args.
+  const source = networkName; // Source is always the chain we run this command on, dest is found by process of elimination
+  const destination = config.isUniversal
+    ? Object.keys(config.sendUniversalPacket.networks).find((chain) => chain !== source)
+    : Object.keys(config.sendPacket.networks).find((chain) => chain !== source);
+
+  const [srcChainId, destChainId] = [source, destination].map((networkName) => convertNetworkToChainId(networkName));
+
+  const feeData = await estimateRelayerFees(srcChainId, destChainId, recvPacketGasLimit.toString(), ackPacketGasLimit.toString());
+
+  // Send the packet using the fee estimator api.
+  // NOTE: We also send a value of ether equal to the maxTotalFee returned by the API. The tx will revert if you don't send *exactly* this amount
+  await ibcApp.connect(accounts[0]).sendPacketWithFee(
+    channelIdBytes,
+    timeoutSeconds,
+    [feeData.recvFeeEstGas, feeData.ackFeeEstGas],
+    [feeData.destFeeBigInt, feeData.srcFeeBigInt],
+    // Define and pass optionalArgs appropriately or remove if not needed
+    { value: feeData.totalValue },
+  );
 }
 
 // We recommend this pattern to be able to use async/await everywhere
